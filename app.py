@@ -77,7 +77,7 @@ else:
     tab1, tab2 = tab_monitoring, tab_management
 
 # ==========================================
-# TAB: CASE STATUS MONITORING (DYNAMIC FILTERS & BULK EDIT)
+# TAB: CASE STATUS MONITORING
 # ==========================================
 with tab2:
     st.subheader("Case Status Overview & Advanced Filters")
@@ -103,16 +103,25 @@ with tab2:
     res = query.order("cr_no", desc=False).execute()
     filtered_records = res.data
 
+    total_count = len(filtered_records) if filtered_records else 0
+
+    # Total Cases Counter Summary Box
+    st.metric(label="Total Cases Found", value=total_count)
+
     if filtered_records:
         df_status = pd.DataFrame(filtered_records)
         df_status.insert(0, "Sl. No.", range(1, len(df_status) + 1))
+        
+        # Fallback if 'sections' column doesn't exist on older database rows
+        if "sections" not in df_status.columns:
+            df_status["sections"] = ""
 
         st.dataframe(
             df_status.rename(columns={
                 "cr_no": "CR No", "reg_year": "Year", "case_type": "Case Type",
-                "investigating_officer": "IO", "stage": "Stage Status",
+                "investigating_officer": "IO", "sections": "Sections", "stage": "Stage Status",
                 "scrutiny_officer": "With Officer", "pdf_url": "PDF URL"
-            })[["Sl. No.", "CR No", "Year", "Case Type", "IO", "Stage Status", "With Officer"]],
+            })[["Sl. No.", "CR No", "Year", "Case Type", "IO", "Sections", "Stage Status", "With Officer"]],
             use_container_width=True,
             hide_index=True
         )
@@ -138,6 +147,8 @@ with tab2:
                 with b_col3:
                     new_stage = st.selectbox("Update Stage Status (Optional)", ["No Change", "Under Investigation", "Under Scrutiny", "CC Pending", "UI Disposed"])
 
+                new_sections = st.text_input("Update Sections (Optional - Leave blank to keep existing)", placeholder="e.g. 302, 395 IPC")
+
                 scrutiny_officer = ""
                 if new_stage == "Under Scrutiny":
                     scrutiny_officer = st.radio("With Officer (Scrutiny)", ["CPI", "DSP", "APP", "PP"], horizontal=True)
@@ -146,6 +157,7 @@ with tab2:
                     update_payload = {}
                     if new_case_type != "No Change": update_payload["case_type"] = new_case_type
                     if new_io != "No Change": update_payload["investigating_officer"] = new_io
+                    if new_sections.strip() != "": update_payload["sections"] = new_sections.strip()
                     if new_stage != "No Change":
                         update_payload["stage"] = new_stage
                         update_payload["scrutiny_officer"] = scrutiny_officer
@@ -176,9 +188,11 @@ with tab1:
     with col3:
         case_type = st.radio("Case Type", ["Non-Heinous", "Heinous"], horizontal=True)
 
-    col_io, col_file = st.columns([1, 2])
+    col_io, col_sec, col_file = st.columns([1, 1, 2])
     with col_io:
         io_officer = st.radio("Investigating Officer (IO)", ["SHO", "CPI", "DSP"], horizontal=True)
+    with col_sec:
+        sections = st.text_input("IPC / Law Sections", placeholder="e.g. 302, 395 IPC")
     with col_file:
         uploaded_file = st.file_uploader("Upload Case File (.pdf or .docx)", type=["pdf", "docx"])
 
@@ -229,6 +243,7 @@ with tab1:
                     "reg_year": str(reg_year),
                     "case_type": case_type,
                     "investigating_officer": io_officer,
+                    "sections": sections,
                     "pdf_url": pdf_url,
                     "stage": "Under Investigation",
                 }).execute()
@@ -248,11 +263,15 @@ with tab1:
         df_upload = pd.DataFrame(records)
         df_upload.insert(0, "Sl. No.", range(1, len(df_upload) + 1))
         
+        if "sections" not in df_upload.columns:
+            df_upload["sections"] = ""
+
         st.dataframe(
             df_upload.rename(columns={
                 "cr_no": "CR No", "reg_year": "Year", "case_type": "Case Type",
-                "investigating_officer": "IO", "stage": "Stage Status", "pdf_url": "PDF URL"
-            })[["Sl. No.", "CR No", "Year", "Case Type", "IO", "Stage Status", "PDF URL"]],
+                "investigating_officer": "IO", "sections": "Sections",
+                "stage": "Stage Status", "pdf_url": "PDF URL"
+            })[["Sl. No.", "CR No", "Year", "Case Type", "IO", "Sections", "Stage Status", "PDF URL"]],
             use_container_width=True,
             hide_index=True
         )
@@ -265,21 +284,24 @@ with tab1:
         
         selected_rec = [r for r in records if r["id"] == selected_case_id][0]
 
-        # Single Record Quick Modifications (IO / Case Type)
+        # Single Record Quick Modifications (IO / Case Type / Sections)
         if st.session_state["is_admin"]:
             with st.expander("✏️ Edit Selected Case Details"):
-                e_col1, e_col2 = st.columns(2)
+                e_col1, e_col2, e_col3 = st.columns(3)
                 with e_col1:
-                    edit_case_type = st.radio("Case Type", ["Non-Heinous", "Heinous"], index=0 if selected_rec["case_type"] == "Non-Heinous" else 1, key=f"ct_{selected_case_id}")
+                    edit_case_type = st.radio("Case Type", ["Non-Heinous", "Heinous"], index=0 if selected_rec.get("case_type") == "Non-Heinous" else 1, key=f"ct_{selected_case_id}")
                 with e_col2:
                     io_options = ["SHO", "CPI", "DSP"]
-                    io_idx = io_options.index(selected_rec["investigating_officer"]) if selected_rec["investigating_officer"] in io_options else 0
+                    io_idx = io_options.index(selected_rec.get("investigating_officer")) if selected_rec.get("investigating_officer") in io_options else 0
                     edit_io = st.radio("Investigating Officer", io_options, index=io_idx, key=f"io_{selected_case_id}")
+                with e_col3:
+                    edit_sections = st.text_input("Sections", value=selected_rec.get("sections", ""), key=f"sec_{selected_case_id}")
                 
                 if st.button("Save Case Details"):
                     supabase.table("dcr_cases").update({
                         "case_type": edit_case_type,
-                        "investigating_officer": edit_io
+                        "investigating_officer": edit_io,
+                        "sections": edit_sections
                     }).eq("id", selected_case_id).execute()
                     st.success("Case details updated successfully!")
                     st.rerun()
