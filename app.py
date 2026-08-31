@@ -3,7 +3,6 @@ import glob
 import subprocess
 import pandas as pd
 import streamlit as st
-import streamlit.components.v1 as components
 from supabase import create_client, Client
 
 # --- SUPABASE INITIALIZATION ---
@@ -78,7 +77,7 @@ else:
     tab1, tab2 = tab_monitoring, tab_management
 
 # ==========================================
-# TAB: CASE STATUS MONITORING (MOBILE OPTIMIZED PDF VIEWER)
+# TAB: CASE STATUS MONITORING (CLICKABLE TABLE)
 # ==========================================
 with tab2:
     st.subheader("Case Status Overview & Advanced Filters")
@@ -116,42 +115,32 @@ with tab2:
         if "sections" not in df_status.columns:
             df_status["sections"] = ""
 
-        # Main Table Display
+        # Rename columns for table presentation
+        df_display = df_status.rename(columns={
+            "cr_no": "CR No", 
+            "reg_year": "Year", 
+            "case_type": "Case Type",
+            "investigating_officer": "IO", 
+            "sections": "Sections", 
+            "stage": "Stage Status",
+            "scrutiny_officer": "With Officer", 
+            "pdf_url": "View DCR File"
+        })[["Sl. No.", "CR No", "Year", "Case Type", "IO", "Sections", "Stage Status", "With Officer", "View DCR File"]]
+
+        # Interactive Table with Direct Link Column
         st.dataframe(
-            df_status.rename(columns={
-                "cr_no": "CR No", "reg_year": "Year", "case_type": "Case Type",
-                "investigating_officer": "IO", "sections": "Sections", "stage": "Stage Status",
-                "scrutiny_officer": "With Officer", "pdf_url": "PDF Link"
-            })[["Sl. No.", "CR No", "Year", "Case Type", "IO", "Sections", "Stage Status", "PDF Link"]],
+            df_display,
+            column_config={
+                "View DCR File": st.column_config.LinkColumn(
+                    "Action",
+                    help="Tap to open DCR PDF directly",
+                    validate="^https://.*",
+                    display_text="📄 View PDF"
+                )
+            },
             use_container_width=True,
             hide_index=True
         )
-
-        st.divider()
-
-        # Mobile Direct PDF Access & Case Selection
-        st.subheader("📲 Mobile Quick PDF Viewer")
-        selected_case_id = st.selectbox(
-            "Select CR Number to open PDF directly on Mobile:",
-            options=[r["id"] for r in filtered_records],
-            format_func=lambda x: f"CR No: {[r for r in filtered_records if r['id']==x][0]['cr_no']}/{[r for r in filtered_records if r['id']==x][0]['reg_year']} - Sections: {[r for r in filtered_records if r['id']==x][0].get('sections', 'N/A')}"
-        )
-        
-        selected_rec = [r for r in filtered_records if r["id"] == selected_case_id][0]
-        pdf_url = selected_rec.get("pdf_url", "")
-
-        c_btn, c_info = st.columns([1, 2])
-        with c_btn:
-            st.link_button("📄 Open DCR PDF Fullscreen", pdf_url, use_container_width=True)
-
-        with st.expander("📱 Tap to Embed/Preview PDF on Screen", expanded=False):
-            if pdf_url:
-                components.html(
-                    f'<iframe src="{pdf_url}" width="100%" height="600px" style="border:none;"></iframe>',
-                    height=620
-                )
-            else:
-                st.warning("No PDF URL available for this record.")
 
         st.divider()
 
@@ -293,26 +282,44 @@ with tab1:
         if "sections" not in df_upload.columns:
             df_upload["sections"] = ""
 
+        df_upload_display = df_upload.rename(columns={
+            "cr_no": "CR No", 
+            "reg_year": "Year", 
+            "case_type": "Case Type",
+            "investigating_officer": "IO", 
+            "sections": "Sections", 
+            "stage": "Stage Status", 
+            "pdf_url": "View DCR File"
+        })[["Sl. No.", "CR No", "Year", "Case Type", "IO", "Sections", "Stage Status", "View DCR File"]]
+
+        # Clickable Link inside the Management table
         st.dataframe(
-            df_upload.rename(columns={
-                "cr_no": "CR No", "reg_year": "Year", "case_type": "Case Type",
-                "investigating_officer": "IO", "sections": "Sections",
-                "stage": "Stage Status", "pdf_url": "PDF URL"
-            })[["Sl. No.", "CR No", "Year", "Case Type", "IO", "Sections", "Stage Status", "PDF URL"]],
+            df_upload_display,
+            column_config={
+                "View DCR File": st.column_config.LinkColumn(
+                    "Action",
+                    help="Tap to open DCR PDF directly",
+                    validate="^https://.*",
+                    display_text="📄 View PDF"
+                )
+            },
             use_container_width=True,
             hide_index=True
         )
 
-        selected_case_id = st.selectbox(
-            "Select Case Record to View/Edit/Delete:",
-            options=[r["id"] for r in records],
-            format_func=lambda x: f"CR No: {[r for r in records if r['id']==x][0]['cr_no']}/{[r for r in records if r['id']==x][0]['reg_year']}"
-        )
-        
-        selected_rec = [r for r in records if r["id"] == selected_case_id][0]
+        st.divider()
 
-        # Single Record Quick Modifications (IO / Case Type / Sections)
+        # Admin Edit/Delete selection
         if st.session_state["is_admin"]:
+            st.subheader("🛠️ Edit / Delete Saved Record")
+            selected_case_id = st.selectbox(
+                "Select Case Record to Edit or Delete:",
+                options=[r["id"] for r in records],
+                format_func=lambda x: f"CR No: {[r for r in records if r['id']==x][0]['cr_no']}/{[r for r in records if r['id']==x][0]['reg_year']}"
+            )
+            
+            selected_rec = [r for r in records if r["id"] == selected_case_id][0]
+
             with st.expander("✏️ Edit Selected Case Details"):
                 e_col1, e_col2, e_col3 = st.columns(3)
                 with e_col1:
@@ -333,11 +340,7 @@ with tab1:
                     st.success("Case details updated successfully!")
                     st.rerun()
 
-        col_v, col_d = st.columns([1, 4])
-        with col_v:
-            st.link_button("📄 Open / Download PDF", selected_rec["pdf_url"])
-        with col_d:
-            if st.button("🗑️ Delete Selected Case Record", disabled=not st.session_state["is_admin"]):
+            if st.button("🗑️ Delete Selected Case Record"):
                 pdf_name = f"CR_{selected_rec['cr_no']}_{selected_rec['reg_year']}.pdf"
                 supabase.storage.from_(BUCKET_NAME).remove([pdf_name])
                 supabase.table("dcr_cases").delete().eq("id", selected_case_id).execute()
