@@ -3,6 +3,7 @@ import glob
 import subprocess
 import pandas as pd
 import streamlit as st
+import streamlit.components.v1 as components
 from supabase import create_client, Client
 
 # --- SUPABASE INITIALIZATION ---
@@ -77,7 +78,7 @@ else:
     tab1, tab2 = tab_monitoring, tab_management
 
 # ==========================================
-# TAB: CASE STATUS MONITORING
+# TAB: CASE STATUS MONITORING (MOBILE OPTIMIZED PDF VIEWER)
 # ==========================================
 with tab2:
     st.subheader("Case Status Overview & Advanced Filters")
@@ -112,19 +113,45 @@ with tab2:
         df_status = pd.DataFrame(filtered_records)
         df_status.insert(0, "Sl. No.", range(1, len(df_status) + 1))
         
-        # Fallback if 'sections' column doesn't exist on older database rows
         if "sections" not in df_status.columns:
             df_status["sections"] = ""
 
+        # Main Table Display
         st.dataframe(
             df_status.rename(columns={
                 "cr_no": "CR No", "reg_year": "Year", "case_type": "Case Type",
                 "investigating_officer": "IO", "sections": "Sections", "stage": "Stage Status",
-                "scrutiny_officer": "With Officer", "pdf_url": "PDF URL"
-            })[["Sl. No.", "CR No", "Year", "Case Type", "IO", "Sections", "Stage Status", "With Officer"]],
+                "scrutiny_officer": "With Officer", "pdf_url": "PDF Link"
+            })[["Sl. No.", "CR No", "Year", "Case Type", "IO", "Sections", "Stage Status", "PDF Link"]],
             use_container_width=True,
             hide_index=True
         )
+
+        st.divider()
+
+        # Mobile Direct PDF Access & Case Selection
+        st.subheader("📲 Mobile Quick PDF Viewer")
+        selected_case_id = st.selectbox(
+            "Select CR Number to open PDF directly on Mobile:",
+            options=[r["id"] for r in filtered_records],
+            format_func=lambda x: f"CR No: {[r for r in filtered_records if r['id']==x][0]['cr_no']}/{[r for r in filtered_records if r['id']==x][0]['reg_year']} - Sections: {[r for r in filtered_records if r['id']==x][0].get('sections', 'N/A')}"
+        )
+        
+        selected_rec = [r for r in filtered_records if r["id"] == selected_case_id][0]
+        pdf_url = selected_rec.get("pdf_url", "")
+
+        c_btn, c_info = st.columns([1, 2])
+        with c_btn:
+            st.link_button("📄 Open DCR PDF Fullscreen", pdf_url, use_container_width=True)
+
+        with st.expander("📱 Tap to Embed/Preview PDF on Screen", expanded=False):
+            if pdf_url:
+                components.html(
+                    f'<iframe src="{pdf_url}" width="100%" height="600px" style="border:none;"></iframe>',
+                    height=620
+                )
+            else:
+                st.warning("No PDF URL available for this record.")
 
         st.divider()
 
