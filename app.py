@@ -1,4 +1,5 @@
 import os
+import glob
 import subprocess
 import pandas as pd
 import streamlit as st
@@ -14,6 +15,19 @@ def init_supabase() -> Client:
 supabase = init_supabase()
 BUCKET_NAME = "dcr_vault"
 ADMIN_PIN = "1234"
+
+# --- HELPER FUNCTION: INSTALL LOCAL FONTS ---
+def install_custom_fonts():
+    """Detects and installs any .ttf or .otf font files (e.g. Nudi) on the Linux server."""
+    font_dir = os.path.expanduser("~/.local/share/fonts")
+    os.makedirs(font_dir, exist_ok=True)
+    
+    # Locate font files in repository
+    font_files = glob.glob("*.ttf") + glob.glob("*.otf") + glob.glob("*.TTF")
+    if font_files:
+        for font in font_files:
+            subprocess.run(["cp", font, font_dir], check=False)
+        subprocess.run(["fc-cache", "-f", "-v"], check=False)
 
 # --- PAGE SETUP ---
 st.set_page_config(page_title="Ramanagar PS Crime Tracking", page_icon="🚔", layout="wide")
@@ -72,6 +86,10 @@ with tab1:
                 # Automatic Word (.docx) to PDF Conversion
                 if orig_name.endswith(".docx"):
                     st.info("Converting Word document to PDF on server...")
+                    
+                    # Install any custom fonts uploaded to the GitHub repo
+                    install_custom_fonts()
+
                     with open("temp.docx", "wb") as f:
                         f.write(file_bytes)
                     
