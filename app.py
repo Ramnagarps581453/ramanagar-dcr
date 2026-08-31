@@ -16,24 +16,40 @@ supabase = init_supabase()
 BUCKET_NAME = "dcr_vault"
 ADMIN_PIN = "1234"
 
-# --- HELPER FUNCTION: INSTALL LOCAL FONTS ---
+# --- HELPER FUNCTION: DYNAMIC FONT INSTALLER ---
 def install_custom_fonts():
-    """Detects and installs any .ttf or .otf font files (e.g. Nudi) on the Linux server."""
+    """Detects and installs any .ttf or .otf font files (e.g., Nudi 05 e.ttf) on the Linux cloud server."""
     font_dir = os.path.expanduser("~/.local/share/fonts")
     os.makedirs(font_dir, exist_ok=True)
     
-    # Locate font files in repository
-    font_files = glob.glob("*.ttf") + glob.glob("*.otf") + glob.glob("*.TTF")
+    # Locate all font files uploaded in your GitHub repository
+    font_files = glob.glob("*.ttf") + glob.glob("*.otf") + glob.glob("*.TTF") + glob.glob("*.OTF")
     if font_files:
         for font in font_files:
             subprocess.run(["cp", font, font_dir], check=False)
         subprocess.run(["fc-cache", "-f", "-v"], check=False)
 
-# --- PAGE SETUP ---
-st.set_page_config(page_title="Ramanagar PS Crime Tracking", page_icon="🚔", layout="wide")
+# --- HELPER FUNCTION: AUTO-INCREMENT CR NUMBER ---
+def get_next_cr_number(year):
+    try:
+        response = supabase.table("dcr_cases").select("cr_no").eq("reg_year", str(year)).execute()
+        if response.data:
+            max_cr = max([r["cr_no"] for r in response.data])
+            return max_cr + 1
+    except Exception:
+        pass
+    return 1
+
+# --- PAGE CONFIGURATION & STYLING ---
+st.set_page_config(
+    page_title="Ramanagar PS Crime Tracking",
+    page_icon="🚔",
+    layout="wide"
+)
+
 st.title("🚔 Ramanagar Police Station Crime Tracking System")
 
-# --- AUTHENTICATION ---
+# --- ADMIN AUTHENTICATION ---
 if "is_admin" not in st.session_state:
     st.session_state["is_admin"] = False
 
@@ -44,27 +60,32 @@ with st.sidebar:
         if st.button("Login as Admin"):
             if pin_input == ADMIN_PIN:
                 st.session_state["is_admin"] = True
-                st.success("Admin granted!")
+                st.success("Admin access granted!")
                 st.rerun()
             else:
                 st.error("Incorrect PIN!")
     else:
-        st.success("Mode: ADMIN")
+        st.success("Mode: ADMIN (Full Access)")
         if st.button("Logout Admin"):
             st.session_state["is_admin"] = False
             st.rerun()
 
+# --- NAVIGATION TABS ---
 tab1, tab2 = st.tabs(["📄 Upload & Manage DCR", "📊 Case Status Monitoring"])
 
-# --- TAB 1: UPLOAD & MANAGE DCR ---
+# ==========================================
+# TAB 1: UPLOAD & MANAGE DCR
+# ==========================================
 with tab1:
     st.subheader("Add / Upload New DCR File")
-
+    
     col1, col2, col3 = st.columns([2, 1, 1])
-    with col1:
-        cr_no = st.number_input("CR No", value=1, step=1)
+    
     with col2:
         reg_year = st.selectbox("Year", options=[str(y) for y in range(2024, 2031)], index=2)
+    with col1:
+        auto_cr = get_next_cr_number(reg_year)
+        cr_no = st.number_input("CR No", value=auto_cr, step=1)
     with col3:
         case_type = st.radio("Case Type", ["Non-Heinous", "Heinous"], horizontal=True)
 
@@ -76,18 +97,18 @@ with tab1:
 
     if st.button("Save & Upload to Cloud Vault", disabled=not st.session_state["is_admin"]):
         if uploaded_file is None:
-            st.error("Please select a file first!")
+            st.error("Please upload a file first!")
         else:
             file_bytes = uploaded_file.getvalue()
             orig_name = uploaded_file.name
             pdf_filename = f"CR_{cr_no}_{reg_year}.pdf"
 
             try:
-                # Automatic Word (.docx) to PDF Conversion
+                # Automatic Word (.docx) to PDF Conversion with Nudi Font Support
                 if orig_name.endswith(".docx"):
                     st.info("Converting Word document to PDF on server...")
                     
-                    # Install any custom fonts uploaded to the GitHub repo
+                    # Install custom Nudi fonts uploaded to GitHub
                     install_custom_fonts()
 
                     with open("temp.docx", "wb") as f:
@@ -121,58 +142,64 @@ with tab1:
                     "stage": "Under Investigation",
                 }).execute()
 
-                st.success(f"CR No {cr_no}/{reg_year} saved and uploaded as PDF!")
+                st.success(f"CR No {cr_no}/{reg_year} converted & saved successfully!")
                 st.rerun()
             except Exception as e:
                 st.error(f"Error saving record: {e}")
 
     st.divider()
     st.subheader("All Saved DCR Files")
-
+    
     response = supabase.table("dcr_cases").select("*").order("cr_no", desc=False).execute()
     records = response.data
 
     if records:
-        df = pd.DataFrame(records)
+        df_upload = pd.DataFrame(records)
+        
+        # Display formatted table matching yesterday's layout
         st.dataframe(
-            df[["cr_no", "reg_year", "case_type", "investigating_officer", "stage", "pdf_url"]],
-            use_container_width=True,
+            df_upload.rename(columns={
+                "cr_no": "CR No", "reg_year": "Year", "case_type": "Case Type",
+                "investigating_officer": "IO", "stage": "Stage Status", "pdf_url": "PDF URL"
+            })[["CR No", "Year", "Case Type", "IO", "Stage Status", "PDF URL"]],
+            use_container_width=True
         )
 
-        selected_id = st.selectbox(
-            "Select Case Record to Manage:",
+        selected_case_id = st.selectbox(
+            "Select Case Record to View/Delete:",
             options=[r["id"] for r in records],
-            format_func=lambda x: f"CR No: {[r for r in records if r['id']==x][0]['cr_no']}/{[r for r in records if r['id']==x][0]['reg_year']}",
+            format_func=lambda x: f"CR No: {[r for r in records if r['id']==x][0]['cr_no']}/{[r for r in records if r['id']==x][0]['reg_year']}"
         )
-
-        selected_rec = [r for r in records if r["id"] == selected_id][0]
+        
+        selected_rec = [r for r in records if r["id"] == selected_case_id][0]
 
         col_v, col_d = st.columns([1, 4])
         with col_v:
-            st.link_button("📄 Open PDF Document", selected_rec["pdf_url"])
+            st.link_button("📄 Open / Download PDF", selected_rec["pdf_url"])
         with col_d:
             if st.button("🗑️ Delete Selected Case Record", disabled=not st.session_state["is_admin"]):
                 pdf_name = f"CR_{selected_rec['cr_no']}_{selected_rec['reg_year']}.pdf"
                 supabase.storage.from_(BUCKET_NAME).remove([pdf_name])
-                supabase.table("dcr_cases").delete().eq("id", selected_id).execute()
+                supabase.table("dcr_cases").delete().eq("id", selected_case_id).execute()
                 st.warning("Record deleted!")
                 st.rerun()
 
-# --- TAB 2: MONITORING ---
+# ==========================================
+# TAB 2: CASE STATUS MONITORING
+# ==========================================
 with tab2:
-    st.subheader("Case Status Overview & Filters")
+    st.subheader("Case Status Overview & Advanced Filters")
+
+    # Filters Section
     f_col1, f_col2, f_col3 = st.columns(3)
     with f_col1:
         filter_type = st.radio("Filter Case Type", ["ALL", "Heinous", "Non-Heinous"], horizontal=True)
     with f_col2:
         filter_io = st.radio("Filter IO", ["ALL", "SHO", "CPI", "DSP"], horizontal=True)
     with f_col3:
-        filter_stage = st.radio(
-            "Filter Stage",
-            ["ALL", "Under Investigation", "Under Scrutiny", "CC Pending", "UI Disposed"],
-            horizontal=True,
-        )
+        filter_stage = st.radio("Filter Stage", ["ALL", "Under Investigation", "Under Scrutiny", "CC Pending", "UI Disposed"], horizontal=True)
 
+    # Query Data based on filters
     query = supabase.table("dcr_cases").select("*")
     if filter_type != "ALL":
         query = query.eq("case_type", filter_type)
@@ -186,24 +213,31 @@ with tab2:
 
     if filtered_records:
         df_status = pd.DataFrame(filtered_records)
+
         st.dataframe(
-            df_status[["cr_no", "reg_year", "case_type", "investigating_officer", "stage", "scrutiny_officer"]],
-            use_container_width=True,
+            df_status.rename(columns={
+                "cr_no": "CR No", "reg_year": "Year", "case_type": "Case Type",
+                "investigating_officer": "IO", "stage": "Stage Status",
+                "scrutiny_officer": "With Officer", "pdf_url": "PDF URL"
+            })[["CR No", "Year", "Case Type", "IO", "Stage Status", "With Officer"]],
+            use_container_width=True
         )
 
         st.divider()
+
+        # Admin Control Panel for Stage Updating
         st.subheader("Update Case Stage Status")
         case_to_update = st.selectbox(
             "Select Case to Update:",
             options=[r["id"] for r in filtered_records],
-            format_func=lambda x: f"CR No: {[r for r in filtered_records if r['id']==x][0]['cr_no']}/{[r for r in filtered_records if r['id']==x][0]['reg_year']}",
+            format_func=lambda x: f"CR No: {[r for r in filtered_records if r['id']==x][0]['cr_no']}/{[r for r in filtered_records if r['id']==x][0]['reg_year']} | Current Stage: {[r for r in filtered_records if r['id']==x][0]['stage']}"
         )
 
         u_col1, u_col2 = st.columns(2)
         with u_col1:
             new_stage = st.radio(
                 "Select New Stage Status",
-                ["Under Investigation", "Under Scrutiny", "CC Pending", "UI Disposed"],
+                ["Under Investigation", "Under Scrutiny", "CC Pending", "UI Disposed"]
             )
         with u_col2:
             scrutiny_officer = ""
