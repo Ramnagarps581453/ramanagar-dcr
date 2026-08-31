@@ -18,11 +18,8 @@ ADMIN_PIN = "1234"
 
 # --- HELPER FUNCTION: DYNAMIC FONT INSTALLER ---
 def install_custom_fonts():
-    """Detects and installs any .ttf or .otf font files (e.g., Nudi 05 e.ttf) on the Linux cloud server."""
     font_dir = os.path.expanduser("~/.local/share/fonts")
     os.makedirs(font_dir, exist_ok=True)
-    
-    # Locate all font files uploaded in your GitHub repository
     font_files = glob.glob("*.ttf") + glob.glob("*.otf") + glob.glob("*.TTF") + glob.glob("*.OTF")
     if font_files:
         for font in font_files:
@@ -49,7 +46,7 @@ st.set_page_config(
 
 st.title("🚔 Ramanagar Police Station Crime Tracking System")
 
-# --- ADMIN AUTHENTICATION ---
+# --- ADMIN AUTHENTICATION & DEFAULT TAB SETTING ---
 if "is_admin" not in st.session_state:
     st.session_state["is_admin"] = False
 
@@ -70,11 +67,101 @@ with st.sidebar:
             st.session_state["is_admin"] = False
             st.rerun()
 
-# --- NAVIGATION TABS ---
-tab1, tab2 = st.tabs(["📄 Upload & Manage DCR", "📊 Case Status Monitoring"])
+# Default to Case Status Monitoring for non-admins / mobile view
+tab_order = ["📊 Case Status Monitoring", "📄 Upload & Manage DCR"] if not st.session_state["is_admin"] else ["📄 Upload & Manage DCR", "📊 Case Status Monitoring"]
+tab_monitoring, tab_management = st.tabs(tab_order)
+
+if not st.session_state["is_admin"]:
+    tab2, tab1 = tab_monitoring, tab_management
+else:
+    tab1, tab2 = tab_monitoring, tab_management
 
 # ==========================================
-# TAB 1: UPLOAD & MANAGE DCR
+# TAB: CASE STATUS MONITORING (DYNAMIC FILTERS & BULK EDIT)
+# ==========================================
+with tab2:
+    st.subheader("Case Status Overview & Advanced Filters")
+
+    # Dynamic Interactive Filters Section
+    f_col1, f_col2, f_col3 = st.columns(3)
+    with f_col1:
+        filter_type = st.radio("Filter Case Type", ["ALL", "Heinous", "Non-Heinous"], horizontal=True)
+    with f_col2:
+        filter_io = st.radio("Filter IO", ["ALL", "SHO", "CPI", "DSP"], horizontal=True)
+    with f_col3:
+        filter_stage = st.radio("Filter Stage", ["ALL", "Under Investigation", "Under Scrutiny", "CC Pending", "UI Disposed"], horizontal=True)
+
+    # Dynamic Data Query
+    query = supabase.table("dcr_cases").select("*")
+    if filter_type != "ALL":
+        query = query.eq("case_type", filter_type)
+    if filter_io != "ALL":
+        query = query.eq("investigating_officer", filter_io)
+    if filter_stage != "ALL":
+        query = query.eq("stage", filter_stage)
+
+    res = query.order("cr_no", desc=False).execute()
+    filtered_records = res.data
+
+    if filtered_records:
+        df_status = pd.DataFrame(filtered_records)
+        df_status.insert(0, "Sl. No.", range(1, len(df_status) + 1))
+
+        st.dataframe(
+            df_status.rename(columns={
+                "cr_no": "CR No", "reg_year": "Year", "case_type": "Case Type",
+                "investigating_officer": "IO", "stage": "Stage Status",
+                "scrutiny_officer": "With Officer", "pdf_url": "PDF URL"
+            })[["Sl. No.", "CR No", "Year", "Case Type", "IO", "Stage Status", "With Officer"]],
+            use_container_width=True,
+            hide_index=True
+        )
+
+        st.divider()
+
+        # Bulk & Single Case Editing Control Panel (Admin Only)
+        if st.session_state["is_admin"]:
+            st.subheader("⚙️ Bulk / Batch Update Cases")
+            
+            selected_case_ids = st.multiselect(
+                "Select CR Numbers to update at once:",
+                options=[r["id"] for r in filtered_records],
+                format_func=lambda x: f"CR No: {[r for r in filtered_records if r['id']==x][0]['cr_no']}/{[r for r in filtered_records if r['id']==x][0]['reg_year']} (Current Stage: {[r for r in filtered_records if r['id']==x][0]['stage']})"
+            )
+
+            if selected_case_ids:
+                b_col1, b_col2, b_col3 = st.columns(3)
+                with b_col1:
+                    new_case_type = st.selectbox("Update Case Type (Optional)", ["No Change", "Non-Heinous", "Heinous"])
+                with b_col2:
+                    new_io = st.selectbox("Update IO (Optional)", ["No Change", "SHO", "CPI", "DSP"])
+                with b_col3:
+                    new_stage = st.selectbox("Update Stage Status (Optional)", ["No Change", "Under Investigation", "Under Scrutiny", "CC Pending", "UI Disposed"])
+
+                scrutiny_officer = ""
+                if new_stage == "Under Scrutiny":
+                    scrutiny_officer = st.radio("With Officer (Scrutiny)", ["CPI", "DSP", "APP", "PP"], horizontal=True)
+
+                if st.button("Apply Bulk Updates"):
+                    update_payload = {}
+                    if new_case_type != "No Change": update_payload["case_type"] = new_case_type
+                    if new_io != "No Change": update_payload["investigating_officer"] = new_io
+                    if new_stage != "No Change":
+                        update_payload["stage"] = new_stage
+                        update_payload["scrutiny_officer"] = scrutiny_officer
+
+                    if update_payload:
+                        for cid in selected_case_ids:
+                            supabase.table("dcr_cases").update(update_payload).eq("id", cid).execute()
+                        st.success(f"Updated {len(selected_case_ids)} records successfully!")
+                        st.rerun()
+                    else:
+                        st.warning("Please select at least one field to change.")
+    else:
+        st.info("No cases matching the selected filters.")
+
+# ==========================================
+# TAB: UPLOAD & MANAGE DCR
 # ==========================================
 with tab1:
     st.subheader("Add / Upload New DCR File")
@@ -95,7 +182,14 @@ with tab1:
     with col_file:
         uploaded_file = st.file_uploader("Upload Case File (.pdf or .docx)", type=["pdf", "docx"])
 
-    if st.button("Save & Upload to Cloud Vault", disabled=not st.session_state["is_admin"]):
+    # Duplicate CR Number Check
+    existing_check = supabase.table("dcr_cases").select("id").eq("cr_no", int(cr_no)).eq("reg_year", str(reg_year)).execute()
+    is_duplicate = len(existing_check.data) > 0
+
+    if is_duplicate:
+        st.error(f"⚠️ CR No {cr_no}/{reg_year} already exists in records! Duplicate numbers are blocked.")
+
+    if st.button("Save & Upload to Cloud Vault", disabled=not st.session_state["is_admin"] or is_duplicate):
         if uploaded_file is None:
             st.error("Please upload a file first!")
         else:
@@ -104,11 +198,8 @@ with tab1:
             pdf_filename = f"CR_{cr_no}_{reg_year}.pdf"
 
             try:
-                # Automatic Word (.docx) to PDF Conversion with Nudi Font Support
                 if orig_name.endswith(".docx"):
                     st.info("Converting Word document to PDF on server...")
-                    
-                    # Install custom Nudi fonts uploaded to GitHub
                     install_custom_fonts()
 
                     with open("temp.docx", "wb") as f:
@@ -124,7 +215,7 @@ with tab1:
                 else:
                     final_pdf_bytes = file_bytes
 
-                # 1. Upload final PDF to Supabase Storage
+                # Upload to Supabase Storage
                 supabase.storage.from_(BUCKET_NAME).upload(
                     path=pdf_filename,
                     file=final_pdf_bytes,
@@ -132,7 +223,7 @@ with tab1:
                 )
                 pdf_url = supabase.storage.from_(BUCKET_NAME).get_public_url(pdf_filename)
 
-                # 2. Insert record into Supabase Table
+                # Insert to Supabase Database Table
                 supabase.table("dcr_cases").insert({
                     "cr_no": int(cr_no),
                     "reg_year": str(reg_year),
@@ -155,23 +246,43 @@ with tab1:
 
     if records:
         df_upload = pd.DataFrame(records)
+        df_upload.insert(0, "Sl. No.", range(1, len(df_upload) + 1))
         
-        # Display formatted table matching yesterday's layout
         st.dataframe(
             df_upload.rename(columns={
                 "cr_no": "CR No", "reg_year": "Year", "case_type": "Case Type",
                 "investigating_officer": "IO", "stage": "Stage Status", "pdf_url": "PDF URL"
-            })[["CR No", "Year", "Case Type", "IO", "Stage Status", "PDF URL"]],
-            use_container_width=True
+            })[["Sl. No.", "CR No", "Year", "Case Type", "IO", "Stage Status", "PDF URL"]],
+            use_container_width=True,
+            hide_index=True
         )
 
         selected_case_id = st.selectbox(
-            "Select Case Record to View/Delete:",
+            "Select Case Record to View/Edit/Delete:",
             options=[r["id"] for r in records],
             format_func=lambda x: f"CR No: {[r for r in records if r['id']==x][0]['cr_no']}/{[r for r in records if r['id']==x][0]['reg_year']}"
         )
         
         selected_rec = [r for r in records if r["id"] == selected_case_id][0]
+
+        # Single Record Quick Modifications (IO / Case Type)
+        if st.session_state["is_admin"]:
+            with st.expander("✏️ Edit Selected Case Details"):
+                e_col1, e_col2 = st.columns(2)
+                with e_col1:
+                    edit_case_type = st.radio("Case Type", ["Non-Heinous", "Heinous"], index=0 if selected_rec["case_type"] == "Non-Heinous" else 1, key=f"ct_{selected_case_id}")
+                with e_col2:
+                    io_options = ["SHO", "CPI", "DSP"]
+                    io_idx = io_options.index(selected_rec["investigating_officer"]) if selected_rec["investigating_officer"] in io_options else 0
+                    edit_io = st.radio("Investigating Officer", io_options, index=io_idx, key=f"io_{selected_case_id}")
+                
+                if st.button("Save Case Details"):
+                    supabase.table("dcr_cases").update({
+                        "case_type": edit_case_type,
+                        "investigating_officer": edit_io
+                    }).eq("id", selected_case_id).execute()
+                    st.success("Case details updated successfully!")
+                    st.rerun()
 
         col_v, col_d = st.columns([1, 4])
         with col_v:
@@ -183,71 +294,3 @@ with tab1:
                 supabase.table("dcr_cases").delete().eq("id", selected_case_id).execute()
                 st.warning("Record deleted!")
                 st.rerun()
-
-# ==========================================
-# TAB 2: CASE STATUS MONITORING
-# ==========================================
-with tab2:
-    st.subheader("Case Status Overview & Advanced Filters")
-
-    # Filters Section
-    f_col1, f_col2, f_col3 = st.columns(3)
-    with f_col1:
-        filter_type = st.radio("Filter Case Type", ["ALL", "Heinous", "Non-Heinous"], horizontal=True)
-    with f_col2:
-        filter_io = st.radio("Filter IO", ["ALL", "SHO", "CPI", "DSP"], horizontal=True)
-    with f_col3:
-        filter_stage = st.radio("Filter Stage", ["ALL", "Under Investigation", "Under Scrutiny", "CC Pending", "UI Disposed"], horizontal=True)
-
-    # Query Data based on filters
-    query = supabase.table("dcr_cases").select("*")
-    if filter_type != "ALL":
-        query = query.eq("case_type", filter_type)
-    if filter_io != "ALL":
-        query = query.eq("investigating_officer", filter_io)
-    if filter_stage != "ALL":
-        query = query.eq("stage", filter_stage)
-
-    res = query.order("cr_no", desc=False).execute()
-    filtered_records = res.data
-
-    if filtered_records:
-        df_status = pd.DataFrame(filtered_records)
-
-        st.dataframe(
-            df_status.rename(columns={
-                "cr_no": "CR No", "reg_year": "Year", "case_type": "Case Type",
-                "investigating_officer": "IO", "stage": "Stage Status",
-                "scrutiny_officer": "With Officer", "pdf_url": "PDF URL"
-            })[["CR No", "Year", "Case Type", "IO", "Stage Status", "With Officer"]],
-            use_container_width=True
-        )
-
-        st.divider()
-
-        # Admin Control Panel for Stage Updating
-        st.subheader("Update Case Stage Status")
-        case_to_update = st.selectbox(
-            "Select Case to Update:",
-            options=[r["id"] for r in filtered_records],
-            format_func=lambda x: f"CR No: {[r for r in filtered_records if r['id']==x][0]['cr_no']}/{[r for r in filtered_records if r['id']==x][0]['reg_year']} | Current Stage: {[r for r in filtered_records if r['id']==x][0]['stage']}"
-        )
-
-        u_col1, u_col2 = st.columns(2)
-        with u_col1:
-            new_stage = st.radio(
-                "Select New Stage Status",
-                ["Under Investigation", "Under Scrutiny", "CC Pending", "UI Disposed"]
-            )
-        with u_col2:
-            scrutiny_officer = ""
-            if new_stage == "Under Scrutiny":
-                scrutiny_officer = st.radio("With Officer (Scrutiny)", ["CPI", "DSP", "APP", "PP"], horizontal=True)
-
-        if st.button("Save Status Changes", disabled=not st.session_state["is_admin"]):
-            supabase.table("dcr_cases").update({
-                "stage": new_stage,
-                "scrutiny_officer": scrutiny_officer,
-            }).eq("id", case_to_update).execute()
-            st.success("Case status updated successfully!")
-            st.rerun()
