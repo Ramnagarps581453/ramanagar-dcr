@@ -77,7 +77,7 @@ else:
     tab1, tab2 = tab_monitoring, tab_management
 
 # ==========================================
-# TAB: CASE STATUS MONITORING (CLICKABLE TABLE)
+# TAB: CASE STATUS MONITORING (UPDATE LOGIC)
 # ==========================================
 with tab2:
     st.subheader("Case Status Overview & Advanced Filters")
@@ -89,16 +89,30 @@ with tab2:
     with f_col2:
         filter_io = st.radio("Filter IO", ["ALL", "SHO", "CPI", "DSP"], horizontal=True)
     with f_col3:
-        filter_stage = st.radio("Filter Stage", ["ALL", "Under Investigation", "Under Scrutiny", "CC Pending", "UI Disposed"], horizontal=True)
+        filter_stage = st.radio(
+            "Filter Stage", 
+            ["ALL", "Total UI (Includes Scrutiny & CC)", "Actual UI", "Under Scrutiny", "CC Pending", "UI Disposed"], 
+            horizontal=False
+        )
 
-    # Dynamic Data Query
+    # Base Database Query
     query = supabase.table("dcr_cases").select("*")
     if filter_type != "ALL":
         query = query.eq("case_type", filter_type)
     if filter_io != "ALL":
         query = query.eq("investigating_officer", filter_io)
-    if filter_stage != "ALL":
-        query = query.eq("stage", filter_stage)
+
+    # Revised Stage Filter Logic
+    if filter_stage == "Total UI (Includes Scrutiny & CC)":
+        query = query.in_("stage", ["Under Investigation", "Under Scrutiny", "CC Pending"])
+    elif filter_stage == "Actual UI":
+        query = query.eq("stage", "Under Investigation")
+    elif filter_stage == "Under Scrutiny":
+        query = query.eq("stage", "Under Scrutiny")
+    elif filter_stage == "CC Pending":
+        query = query.eq("stage", "CC Pending")
+    elif filter_stage == "UI Disposed":
+        query = query.eq("stage", "UI Disposed")
 
     res = query.order("cr_no", desc=False).execute()
     filtered_records = res.data
@@ -106,7 +120,7 @@ with tab2:
     total_count = len(filtered_records) if filtered_records else 0
 
     # Total Cases Counter Summary Box
-    st.metric(label="Total Cases Found", value=total_count)
+    st.metric(label=f"Total Cases Found ({filter_stage})", value=total_count)
 
     if filtered_records:
         df_status = pd.DataFrame(filtered_records)
@@ -115,7 +129,6 @@ with tab2:
         if "sections" not in df_status.columns:
             df_status["sections"] = ""
 
-        # Rename columns for table presentation
         df_display = df_status.rename(columns={
             "cr_no": "CR No", 
             "reg_year": "Year", 
@@ -144,7 +157,7 @@ with tab2:
 
         st.divider()
 
-        # Bulk & Single Case Editing Control Panel (Admin Only)
+        # Bulk Case Editing Control Panel (Admin Only)
         if st.session_state["is_admin"]:
             st.subheader("⚙️ Bulk / Batch Update Cases")
             
@@ -292,7 +305,7 @@ with tab1:
             "pdf_url": "View DCR File"
         })[["Sl. No.", "CR No", "Year", "Case Type", "IO", "Sections", "Stage Status", "View DCR File"]]
 
-        # Clickable Link inside the Management table
+        # Clickable Link inside Management table
         st.dataframe(
             df_upload_display,
             column_config={
