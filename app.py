@@ -77,7 +77,7 @@ else:
     tab1, tab2 = tab_monitoring, tab_management
 
 # ==========================================
-# TAB: CASE STATUS MONITORING (UPDATE LOGIC)
+# TAB: CASE STATUS MONITORING
 # ==========================================
 with tab2:
     st.subheader("Case Status Overview & Advanced Filters")
@@ -102,26 +102,80 @@ with tab2:
     if filter_io != "ALL":
         query = query.eq("investigating_officer", filter_io)
 
-    # Revised Stage Filter Logic
+    # State tracking for drill-down selection inside Total UI
+    if "ui_sub_filter" not in st.session_state:
+        st.session_state["ui_sub_filter"] = "ALL_UI"
+
+    # Reset sub-filter when leaving Total UI stage option
+    if filter_stage != "Total UI (Includes Scrutiny & CC)":
+        st.session_state["ui_sub_filter"] = "ALL_UI"
+
+    # Interactive Breakdown & Metrics Block
     if filter_stage == "Total UI (Includes Scrutiny & CC)":
-        query = query.in_("stage", ["Under Investigation", "Under Scrutiny", "CC Pending"])
-    elif filter_stage == "Actual UI":
-        query = query.eq("stage", "Under Investigation")
-    elif filter_stage == "Under Scrutiny":
-        query = query.eq("stage", "Under Scrutiny")
-    elif filter_stage == "CC Pending":
-        query = query.eq("stage", "CC Pending")
-    elif filter_stage == "UI Disposed":
-        query = query.eq("stage", "UI Disposed")
+        # Fetch all UI-related records first to compute counts
+        base_ui_res = query.in_("stage", ["Under Investigation", "Under Scrutiny", "CC Pending"]).order("cr_no", desc=False).execute()
+        ui_records = base_ui_res.data if base_ui_res.data else []
 
-    res = query.order("cr_no", desc=False).execute()
-    filtered_records = res.data
+        actual_ui_count = len([r for r in ui_records if r.get("stage") == "Under Investigation"])
+        scrutiny_count = len([r for r in ui_records if r.get("stage") == "Under Scrutiny"])
+        cc_pending_count = len([r for r in ui_records if r.get("stage") == "CC Pending"])
+        total_ui_count = len(ui_records)
 
-    total_count = len(filtered_records) if filtered_records else 0
+        st.markdown("### 📊 Total UI Breakdown (Click to Filter Details Below)")
+        
+        # Clickable Metric Breakdown Buttons
+        m_col0, m_col1, m_col2, m_col3 = st.columns(4)
+        with m_col0:
+            if st.button(f"📋 Total UI\n\n# {total_ui_count}", use_container_width=True):
+                st.session_state["ui_sub_filter"] = "ALL_UI"
+                st.rerun()
+        with m_col1:
+            if st.button(f"🔍 Actual UI\n\n# {actual_ui_count}", use_container_width=True):
+                st.session_state["ui_sub_filter"] = "Actual UI"
+                st.rerun()
+        with m_col2:
+            if st.button(f"📑 Under Scrutiny\n\n# {scrutiny_count}", use_container_width=True):
+                st.session_state["ui_sub_filter"] = "Under Scrutiny"
+                st.rerun()
+        with m_col3:
+            if st.button(f"⚖️ CC Pending\n\n# {cc_pending_count}", use_container_width=True):
+                st.session_state["ui_sub_filter"] = "CC Pending"
+                st.rerun()
 
-    # Total Cases Counter Summary Box
-    st.metric(label=f"Total Cases Found ({filter_stage})", value=total_count)
+        # Apply active sub-filter selection
+        if st.session_state["ui_sub_filter"] == "Actual UI":
+            filtered_records = [r for r in ui_records if r.get("stage") == "Under Investigation"]
+            active_label = "Actual UI Cases"
+        elif st.session_state["ui_sub_filter"] == "Under Scrutiny":
+            filtered_records = [r for r in ui_records if r.get("stage") == "Under Scrutiny"]
+            active_label = "Under Scrutiny Cases"
+        elif st.session_state["ui_sub_filter"] == "CC Pending":
+            filtered_records = [r for r in ui_records if r.get("stage") == "CC Pending"]
+            active_label = "CC Pending Cases"
+        else:
+            filtered_records = ui_records
+            active_label = "Total UI Cases (Includes Scrutiny & CC)"
 
+        st.caption(f"Currently Showing: **{active_label}** ({len(filtered_records)} records)")
+
+    else:
+        # Standard query logic for non-Total UI options
+        if filter_stage == "Actual UI":
+            query = query.eq("stage", "Under Investigation")
+        elif filter_stage == "Under Scrutiny":
+            query = query.eq("stage", "Under Scrutiny")
+        elif filter_stage == "CC Pending":
+            query = query.eq("stage", "CC Pending")
+        elif filter_stage == "UI Disposed":
+            query = query.eq("stage", "UI Disposed")
+
+        res = query.order("cr_no", desc=False).execute()
+        filtered_records = res.data
+        total_count = len(filtered_records) if filtered_records else 0
+
+        st.metric(label=f"Total Cases Found ({filter_stage})", value=total_count)
+
+    # Render Results Table
     if filtered_records:
         df_status = pd.DataFrame(filtered_records)
         df_status.insert(0, "Sl. No.", range(1, len(df_status) + 1))
@@ -140,7 +194,6 @@ with tab2:
             "pdf_url": "View DCR File"
         })[["Sl. No.", "CR No", "Year", "Case Type", "IO", "Sections", "Stage Status", "With Officer", "View DCR File"]]
 
-        # Interactive Table with Direct Link Column
         st.dataframe(
             df_display,
             column_config={
@@ -305,7 +358,6 @@ with tab1:
             "pdf_url": "View DCR File"
         })[["Sl. No.", "CR No", "Year", "Case Type", "IO", "Sections", "Stage Status", "View DCR File"]]
 
-        # Clickable Link inside Management table
         st.dataframe(
             df_upload_display,
             column_config={
