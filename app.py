@@ -1,9 +1,16 @@
 import os
 import glob
+import io
 import subprocess
 import pandas as pd
 import streamlit as st
 from supabase import create_client, Client
+
+# PDF Generation Imports
+from reportlab.lib.pagesizes import letter
+from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle
+from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+from reportlab.lib import colors
 
 # --- SUPABASE INITIALIZATION ---
 @st.cache_resource
@@ -18,13 +25,16 @@ ADMIN_PIN = "1234"
 
 # --- HELPER FUNCTION: DYNAMIC FONT INSTALLER ---
 def install_custom_fonts():
-    font_dir = os.path.expanduser("~/.local/share/fonts")
-    os.makedirs(font_dir, exist_ok=True)
-    font_files = glob.glob("*.ttf") + glob.glob("*.otf") + glob.glob("*.TTF") + glob.glob("*.OTF")
-    if font_files:
-        for font in font_files:
-            subprocess.run(["cp", font, font_dir], check=False)
-        subprocess.run(["fc-cache", "-f", "-v"], check=False)
+    try:
+        font_dir = os.path.expanduser("~/.local/share/fonts")
+        os.makedirs(font_dir, exist_ok=True)
+        font_files = glob.glob("*.ttf") + glob.glob("*.otf") + glob.glob("*.TTF") + glob.glob("*.OTF")
+        if font_files:
+            for font in font_files:
+                subprocess.run(["cp", font, font_dir], check=False)
+            subprocess.run(["fc-cache", "-f", "-v"], check=False)
+    except Exception:
+        pass
 
 # --- HELPER FUNCTION: AUTO-INCREMENT CR NUMBER ---
 def get_next_cr_number(year):
@@ -36,6 +46,95 @@ def get_next_cr_number(year):
     except Exception:
         pass
     return 1
+
+# --- HELPER FUNCTION: GENERATE UI PDF REPORT ---
+def generate_ui_pdf_report(records):
+    buffer = io.BytesIO()
+    doc = SimpleDocTemplate(buffer, pagesize=letter, rightMargin=30, leftMargin=30, topMargin=30, bottomMargin=30)
+    story = []
+    
+    styles = getSampleStyleSheet()
+    title_style = ParagraphStyle(
+        'TitleStyle',
+        parent=styles['Heading1'],
+        fontSize=14,
+        alignment=1, # Center
+        spaceAfter=15
+    )
+    header_style = ParagraphStyle(
+        'HeaderStyle',
+        parent=styles['Heading2'],
+        fontSize=10,
+        alignment=1, # Center
+        fontName='Helvetica-Bold'
+    )
+    cell_style = ParagraphStyle('CellStyle', parent=styles['Normal'], fontSize=8, leading=10)
+    
+    story.append(Paragraph("UI cases of Ramanagar Police Station.", title_style))
+    
+    # Categorization buckets
+    sections = [
+        ("DSP", "Heinous", "DSP cases Heinous"),
+        ("DSP", "Non-Heinous", "DSP cases Non-Heinous"),
+        ("CPI", "Heinous", "CPI cases Heinous"),
+        ("CPI", "Non-Heinous", "CPI cases Non-Heinous"),
+        ("SHO", "Heinous", "SHO (In PS) cases Heinous"),
+        ("SHO", "Non-Heinous", "SHO (In PS) cases Non-Heinous"),
+    ]
+    
+    for io_type, case_t, label_text in sections:
+        # Filter matching records
+        section_records = [
+            r for r in records 
+            if r.get("investigating_officer") == io_type and r.get("case_type") == case_t
+        ]
+        
+        table_data = []
+        # Section Header Row
+        table_data.append([Paragraph(f"<b>{label_text} (total number of cases: {len(section_records)})</b>", header_style), "", "", "", "", ""])
+        
+        # Table Columns
+        table_data.append([
+            Paragraph("<b>Sr</b>", cell_style),
+            Paragraph("<b>CR No/Year</b>", cell_style),
+            Paragraph("<b>Section of law</b>", cell_style),
+            Paragraph("<b>Current stage</b>", cell_style),
+            Paragraph("<b>Heinous/non heinous</b>", cell_style),
+            Paragraph("<b>Remarks(keep it blank)</b>", cell_style)
+        ])
+        
+        # Populate case rows
+        if section_records:
+            for idx, r in enumerate(section_records, start=1):
+                cr_year = f"{r.get('cr_no')}/{r.get('reg_year')}"
+                table_data.append([
+                    Paragraph(str(idx), cell_style),
+                    Paragraph(cr_year, cell_style),
+                    Paragraph(r.get("sections", ""), cell_style),
+                    Paragraph(r.get("stage", ""), cell_style),
+                    Paragraph(r.get("case_type", ""), cell_style),
+                    Paragraph("", cell_style)
+                ])
+        else:
+            table_data.append([Paragraph("-", cell_style), Paragraph("-", cell_style), Paragraph("-", cell_style), Paragraph("-", cell_style), Paragraph("-", cell_style), Paragraph("", cell_style)])
+            
+        t = Table(table_data, colWidths=[30, 80, 120, 110, 80, 130])
+        t.setStyle(TableStyle([
+            ('SPAN', (0, 0), (5, 0)),
+            ('BACKGROUND', (0, 0), (5, 0), colors.whitesmoke),
+            ('ALIGN', (0, 0), (5, 0), 'CENTER'),
+            ('GRID', (0, 0), (-1, -1), 0.5, colors.black),
+            ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
+            ('BOTTOMPADDING', (0, 0), (-1, -1), 4),
+            ('TOPPADDING', (0, 0), (-1, -1), 4),
+        ]))
+        
+        story.append(t)
+        story.append(Spacer(1, 10))
+        
+    doc.build(story)
+    buffer.seek(0)
+    return buffer
 
 # --- PAGE CONFIGURATION & STYLING ---
 st.set_page_config(
@@ -67,7 +166,6 @@ with st.sidebar:
             st.session_state["is_admin"] = False
             st.rerun()
 
-# Default to Case Status Monitoring for non-admins / mobile view
 tab_order = ["📊 Case Status Monitoring", "📄 Upload & Manage DCR"] if not st.session_state["is_admin"] else ["📄 Upload & Manage DCR", "📊 Case Status Monitoring"]
 tab_monitoring, tab_management = st.tabs(tab_order)
 
@@ -86,12 +184,13 @@ with tab2:
     f_col1, f_col2, f_col3 = st.columns(3)
     with f_col1:
         filter_type = st.radio("Filter Case Type", ["ALL", "Heinous", "Non-Heinous"], horizontal=True)
+        filter_year = st.radio("Filter Year", ["ALL", "2023", "2024", "2025", "2026", "2027"], horizontal=True)
     with f_col2:
         filter_io = st.radio("Filter IO", ["ALL", "SHO", "CPI", "DSP"], horizontal=True)
     with f_col3:
         filter_stage = st.radio(
             "Filter Stage", 
-            ["ALL", "Total UI (Includes Scrutiny & CC)", "Actual UI", "Under Scrutiny", "CC Pending", "UI Disposed"], 
+            ["ALL", "Total UI (Includes Scrutiny, CC & Stay)", "Actual UI", "Under Scrutiny", "CC Pending", "Stayed in Court", "UI Disposed"], 
             horizontal=False
         )
 
@@ -99,6 +198,8 @@ with tab2:
     query = supabase.table("dcr_cases").select("*")
     if filter_type != "ALL":
         query = query.eq("case_type", filter_type)
+    if filter_year != "ALL":
+        query = query.eq("reg_year", filter_year)
     if filter_io != "ALL":
         query = query.eq("investigating_officer", filter_io)
 
@@ -107,24 +208,24 @@ with tab2:
         st.session_state["ui_sub_filter"] = "ALL_UI"
 
     # Reset sub-filter when leaving Total UI stage option
-    if filter_stage != "Total UI (Includes Scrutiny & CC)":
+    if filter_stage != "Total UI (Includes Scrutiny, CC & Stay)":
         st.session_state["ui_sub_filter"] = "ALL_UI"
 
     # Interactive Breakdown & Metrics Block
-    if filter_stage == "Total UI (Includes Scrutiny & CC)":
-        # Fetch all UI-related records first to compute counts
-        base_ui_res = query.in_("stage", ["Under Investigation", "Under Scrutiny", "CC Pending"]).order("cr_no", desc=False).execute()
+    if filter_stage == "Total UI (Includes Scrutiny, CC & Stay)":
+        base_ui_res = query.in_("stage", ["Under Investigation", "Under Scrutiny", "CC Pending", "Stayed in Court"]).order("cr_no", desc=False).execute()
         ui_records = base_ui_res.data if base_ui_res.data else []
 
         actual_ui_count = len([r for r in ui_records if r.get("stage") == "Under Investigation"])
         scrutiny_count = len([r for r in ui_records if r.get("stage") == "Under Scrutiny"])
         cc_pending_count = len([r for r in ui_records if r.get("stage") == "CC Pending"])
+        stayed_count = len([r for r in ui_records if r.get("stage") == "Stayed in Court"])
         total_ui_count = len(ui_records)
 
         st.markdown("### 📊 Total UI Breakdown (Click to Filter Details Below)")
         
-        # Clickable Metric Breakdown Buttons
-        m_col0, m_col1, m_col2, m_col3 = st.columns(4)
+        # Clickable Metric Breakdown Buttons including Stayed in Court
+        m_col0, m_col1, m_col2, m_col3, m_col4 = st.columns(5)
         with m_col0:
             if st.button(f"📋 Total UI\n\n# {total_ui_count}", use_container_width=True):
                 st.session_state["ui_sub_filter"] = "ALL_UI"
@@ -141,6 +242,10 @@ with tab2:
             if st.button(f"⚖️ CC Pending\n\n# {cc_pending_count}", use_container_width=True):
                 st.session_state["ui_sub_filter"] = "CC Pending"
                 st.rerun()
+        with m_col4:
+            if st.button(f"🛑 Stayed in Court\n\n# {stayed_count}", use_container_width=True):
+                st.session_state["ui_sub_filter"] = "Stayed in Court"
+                st.rerun()
 
         # Apply active sub-filter selection
         if st.session_state["ui_sub_filter"] == "Actual UI":
@@ -152,20 +257,34 @@ with tab2:
         elif st.session_state["ui_sub_filter"] == "CC Pending":
             filtered_records = [r for r in ui_records if r.get("stage") == "CC Pending"]
             active_label = "CC Pending Cases"
+        elif st.session_state["ui_sub_filter"] == "Stayed in Court":
+            filtered_records = [r for r in ui_records if r.get("stage") == "Stayed in Court"]
+            active_label = "Stayed in Court Cases"
         else:
             filtered_records = ui_records
-            active_label = "Total UI Cases (Includes Scrutiny & CC)"
+            active_label = "Total UI Cases (Includes Scrutiny, CC & Stay)"
 
         st.caption(f"Currently Showing: **{active_label}** ({len(filtered_records)} records)")
 
+        # PDF Export Option for UI Cases
+        pdf_data = generate_ui_pdf_report(ui_records)
+        st.download_button(
+            label="📄 Export & Download UI Cases PDF Report",
+            data=pdf_data,
+            file_name="Ramanagar_PS_UI_Cases_Report.pdf",
+            mime="application/pdf",
+            use_container_width=True
+        )
+
     else:
-        # Standard query logic for non-Total UI options
         if filter_stage == "Actual UI":
             query = query.eq("stage", "Under Investigation")
         elif filter_stage == "Under Scrutiny":
             query = query.eq("stage", "Under Scrutiny")
         elif filter_stage == "CC Pending":
             query = query.eq("stage", "CC Pending")
+        elif filter_stage == "Stayed in Court":
+            query = query.eq("stage", "Stayed in Court")
         elif filter_stage == "UI Disposed":
             query = query.eq("stage", "UI Disposed")
 
@@ -227,7 +346,7 @@ with tab2:
                 with b_col2:
                     new_io = st.selectbox("Update IO (Optional)", ["No Change", "SHO", "CPI", "DSP"])
                 with b_col3:
-                    new_stage = st.selectbox("Update Stage Status (Optional)", ["No Change", "Under Investigation", "Under Scrutiny", "CC Pending", "UI Disposed"])
+                    new_stage = st.selectbox("Update Stage Status (Optional)", ["No Change", "Under Investigation", "Under Scrutiny", "CC Pending", "Stayed in Court", "UI Disposed"])
 
                 new_sections = st.text_input("Update Sections (Optional - Leave blank to keep existing)", placeholder="e.g. 302, 395 IPC")
 
@@ -263,7 +382,7 @@ with tab1:
     col1, col2, col3 = st.columns([2, 1, 1])
     
     with col2:
-        reg_year = st.selectbox("Year", options=[str(y) for y in range(2024, 2031)], index=2)
+        reg_year = st.selectbox("Year", options=[str(y) for y in range(2023, 2028)], index=1)
     with col1:
         auto_cr = get_next_cr_number(reg_year)
         cr_no = st.number_input("CR No", value=auto_cr, step=1)
