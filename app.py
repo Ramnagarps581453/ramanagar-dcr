@@ -180,8 +180,6 @@ st.markdown("""
 # Centered Title Banner
 st.markdown('<div class="custom-title">🚔 Ramanagar Police Station Crime Tracking System</div>', unsafe_allow_html=True)
 
-st.title("🚔 Ramanagar Police Station Crime Tracking System")
-
 # --- ADMIN AUTHENTICATION & DEFAULT TAB SETTING ---
 if "is_admin" not in st.session_state:
     st.session_state["is_admin"] = False
