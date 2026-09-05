@@ -213,7 +213,7 @@ with tab2:
 
     # Interactive Breakdown & Metrics Block
     if filter_stage == "Total UI (Includes Scrutiny, CC & Stay)":
-        base_ui_res = query.in_("stage", ["Under Investigation", "Under Scrutiny", "CC Pending", "Stayed in Court"])..order("reg_year", desc=False).order("cr_no", desc=False).execute()
+        base_ui_res = query.in_("stage", ["Under Investigation", "Under Scrutiny", "CC Pending", "Stayed in Court"]).order("reg_year", desc=False).order("cr_no", desc=False).execute()
         ui_records = base_ui_res.data if base_ui_res.data else []
 
         actual_ui_count = len([r for r in ui_records if r.get("stage") == "Under Investigation"])
