@@ -138,17 +138,18 @@ def generate_ui_pdf_report(records):
 
 # --- PAGE CONFIGURATION & STYLING ---
 # Custom Mobile-Friendly & Compact Header Styling
+# Custom Mobile-Friendly & Compact Header Styling
 st.markdown("""
     <style>
-        /* 1. Remove large blank top padding */
+        /* 1. Adjusted top padding to keep title visible below top bar */
         .block-container {
-            padding-top: 1.5rem !important;
+            padding-top: 3.5rem !important;
             padding-bottom: 2rem !important;
             padding-left: 1rem !important;
             padding-right: 1rem !important;
         }
         
-        /* 2. Center-aligned, medium size title for desktop and mobile */
+        /* 2. Center-aligned title */
         .custom-title {
             text-align: center;
             font-size: 22px;
@@ -160,16 +161,17 @@ st.markdown("""
 
         /* 3. Mobile UI Optimizations */
         @media (max-width: 768px) {
+            .block-container {
+                padding-top: 4rem !important;
+            }
             .custom-title {
                 font-size: 18px !important;
             }
-            /* Make buttons full width and app-like on mobile */
             .stButton > button {
                 width: 100% !important;
                 border-radius: 8px !important;
                 padding: 10px !important;
             }
-            /* Optimize dataframe table display */
             [data-testid="stDataFrame"] {
                 font-size: 12px !important;
             }
