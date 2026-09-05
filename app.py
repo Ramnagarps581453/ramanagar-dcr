@@ -84,10 +84,11 @@ def generate_ui_pdf_report(records):
     
     for io_type, case_t, label_text in sections:
         # Filter matching records
-        section_records = [
-            r for r in records 
-            if r.get("investigating_officer") == io_type and r.get("case_type") == case_t
-        ]
+        # NEW CODE
+section_records = sorted(
+    [r for r in records if r.get("investigating_officer") == io_type and r.get("case_type") == case_t],
+    key=lambda x: (int(x.get("reg_year", 0)), int(x.get("cr_no", 0)))
+)
         
         table_data = []
         # Section Header Row
