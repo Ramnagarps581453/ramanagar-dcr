@@ -137,11 +137,48 @@ def generate_ui_pdf_report(records):
     return buffer
 
 # --- PAGE CONFIGURATION & STYLING ---
-st.set_page_config(
-    page_title="Ramanagar PS Crime Tracking",
-    page_icon="🚔",
-    layout="wide"
-)
+# Custom Mobile-Friendly & Compact Header Styling
+st.markdown("""
+    <style>
+        /* 1. Remove large blank top padding */
+        .block-container {
+            padding-top: 1.5rem !important;
+            padding-bottom: 2rem !important;
+            padding-left: 1rem !important;
+            padding-right: 1rem !important;
+        }
+        
+        /* 2. Center-aligned, medium size title for desktop and mobile */
+        .custom-title {
+            text-align: center;
+            font-size: 22px;
+            font-weight: 700;
+            color: #1E293B;
+            margin-bottom: 15px;
+            line-height: 1.3;
+        }
+
+        /* 3. Mobile UI Optimizations */
+        @media (max-width: 768px) {
+            .custom-title {
+                font-size: 18px !important;
+            }
+            /* Make buttons full width and app-like on mobile */
+            .stButton > button {
+                width: 100% !important;
+                border-radius: 8px !important;
+                padding: 10px !important;
+            }
+            /* Optimize dataframe table display */
+            [data-testid="stDataFrame"] {
+                font-size: 12px !important;
+            }
+        }
+    </style>
+""", unsafe_allow_html=True)
+
+# Centered Title Banner
+st.markdown('<div class="custom-title">🚔 Ramanagar Police Station Crime Tracking System</div>', unsafe_allow_html=True)
 
 st.title("🚔 Ramanagar Police Station Crime Tracking System")
 
@@ -181,7 +218,7 @@ with tab2:
     st.subheader("Case Status Overview & Advanced Filters")
 
     # Dynamic Interactive Filters Section
-    f_col1, f_col2, f_col3 = st.columns(3)
+    f_col1, f_col2, f_col3 = st.columns([1, 1, 1])
     with f_col1:
         filter_type = st.radio("Filter Case Type", ["ALL", "Heinous", "Non-Heinous"], horizontal=True)
         filter_year = st.radio("Filter Year", ["ALL", "2023", "2024", "2025", "2026", "2027"], horizontal=True)
